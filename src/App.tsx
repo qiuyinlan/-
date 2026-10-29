@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookOpen, Brain, Check, ChevronLeft, ChevronRight, CircleHelp, Cloud,
+  BookOpen, Brain, Check, ChevronLeft, ChevronRight, CircleHelp, Cloud, Database,
   Clock3, FileText, FolderPlus, Layers3, LoaderCircle, MoreHorizontal, Pencil, Plus, Settings2, Sparkles,
   Trash2, Upload, X,
 } from "lucide-react";
@@ -15,6 +15,7 @@ import { ClozeText, everyBlank, toggleBlank } from "./components/ClozeText";
 import { generateCards, GenerateError, Progress, SEGMENT_CHARS, Usage } from "./lib/generate";
 import { bindCloud, cloudLocalDecksChanged, cloudMarkReady } from "./lib/cloud";
 import { CloudPanel, FirstSyncDialog, cloudDotClass, cloudStatusLabel, useCloud } from "./components/CloudPanel";
+import { BackupPanel } from "./components/BackupPanel";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -109,6 +110,7 @@ export default function App() {
   const [renameValue, setRenameValue] = useState("");
   const [deleteDeckId, setDeleteDeckId] = useState<string | null>(null);
   const [cloudOpen, setCloudOpen] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
   const cloud = useCloud();
   const persistQueue = useRef(Promise.resolve());
   const renameCancelled = useRef(false);
@@ -568,7 +570,7 @@ export default function App() {
       <main className="main-area">
         <header className="topbar">
           <div><p className="eyebrow">PERSONAL STUDY SPACE</p><h1>{view === "today" ? "学习总览" : view === "round" ? "循环背诵" : view === "cards" ? activeDeck?.name || "卡片" : "导入与制卡"}</h1></div>
-          <div className="top-actions"><div className="today-date">{dataReady ? "本机自动保存" : "正在读取本机数据"}</div><button className="icon-button" title="账号与云端同步" onClick={() => setCloudOpen(true)}><Cloud size={19} /></button><button className="icon-button" title="模型设置" onClick={() => setSettingsOpen(true)}><Settings2 size={19} /></button></div>
+          <div className="top-actions"><div className="today-date">{dataReady ? "本机自动保存" : "正在读取本机数据"}</div><button className="icon-button" title="数据与备份" onClick={() => setBackupOpen(true)}><Database size={19} /></button><button className="icon-button" title="账号与云端同步" onClick={() => setCloudOpen(true)}><Cloud size={19} /></button><button className="icon-button" title="模型设置" onClick={() => setSettingsOpen(true)}><Settings2 size={19} /></button></div>
         </header>
 
         <nav className="view-tabs" aria-label="学习模式">
@@ -664,6 +666,17 @@ export default function App() {
       })()}
       {settingsOpen && <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && setSettingsOpen(false)}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="modal-header"><div><span className="eyebrow">DEEPSEEK API</span><h2 id="settings-title">模型设置</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)} title="关闭"><X size={18} /></button></div><label>API Base URL<input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.deepseek.com" /></label><label>模型 ID<input value={model} onChange={(e) => setModel(e.target.value)} placeholder="deepseek-flash" /></label><label>DeepSeek API Key<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="粘贴 DeepSeek API Key" autoComplete="off" /></label><p className="settings-note">Key 仅保存在当前浏览器会话；模型地址与 ID 保存在本机浏览器。</p><p className="settings-note">制卡建议用 deepseek-flash：推理型模型（deepseek-v4-pro）会先「想」一大段，思考 token 是 deepseek-flash 的 2–3 倍，速度还慢一倍以上。</p><div className="modal-actions"><button className="button-outline" onClick={() => setSettingsOpen(false)}>取消</button><button className="button-primary" onClick={saveSettings}>保存设置 <Check size={15} /></button></div></section></div>}
       <CloudPanel open={cloudOpen} onClose={() => setCloudOpen(false)} />
+      <BackupPanel
+        open={backupOpen}
+        decks={decks}
+        onClose={() => setBackupOpen(false)}
+        onApply={(next, message) => {
+          setBackupOpen(false);
+          setDecks(next);
+          setActiveDeckId((current) => next.some((deck) => deck.id === current) ? current : next[0]?.id ?? null);
+          flash(message);
+        }}
+      />
       <FirstSyncDialog onError={(message) => flash(message)} />
       {notice && <div className="toast"><Check size={16} />{notice}</div>}
     </div>
