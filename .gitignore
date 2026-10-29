@@ -1,0 +1,7 @@
+node_modules/
+dist/
+# 本机数据（卡组 + 备份）永远不进仓库 —— 这是个人学习内容
+data/
+.env
+.env.local
+*.tsbuildinfo

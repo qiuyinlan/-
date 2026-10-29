@@ -1,0 +1,93 @@
+# =====================================================================
+# 把 study-cards（回忆）构建产物发布到 GitHub Pages
+#
+# 仓库约定：这个目录就是仓库根（独立仓库，比如 huixiang）。
+# 触发：push 到 main（也可以在 Actions 页面手动触发）。
+# 站点：https://<你的用户名>.github.io/<仓库名>/
+#
+# 云端同步（Supabase）的两个值从仓库 Secrets 读：
+#   Settings → Secrets and variables → Actions → 新建 Repository secrets：
+#     VITE_SUPABASE_URL
+#     VITE_SUPABASE_ANON_KEY
+# 没配也不会构建失败：只是产物里云端同步整体关闭（本地功能不变）。
+# 注意：Vite 只在构建时读环境变量 —— 改完 Secrets 要重新跑一次部署才生效。
+# =====================================================================
+
+name: 部署到 GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 允许写入 Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署；新的推送取消正在排队的旧任务
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查 + 构建
+        # 云端同步的两个值从仓库 Secrets 来（Settings → Secrets and variables → Actions）。
+        # 没配 Secrets 也不会失败：只是产物里云端同步关闭，本机功能照旧。
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传构建产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 跑测试
+        run: npm test
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布
+        id: deployment
+        uses: actions/deploy-pages@v4
