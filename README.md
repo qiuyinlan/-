@@ -58,12 +58,8 @@ npm start
 
 ## 部署到 GitHub Pages
 
-本应用是独立的静态前端，建议单独建一个仓库再发布（构建走相对路径，任意仓库名都能跑）：
-
-1. 在 GitHub 建一个空仓库（public；免费版 Pages 只支持公开仓库）；
-2. 把这个目录推上去：`git init` → `git add .` → `git commit` → `git remote add origin <仓库地址>` → `git push -u origin main`；
-3. 仓库 **Settings → Pages → Source** 选 **GitHub Actions**（推送后自动部署，见 `.github/workflows/deploy.yml`）；
-4. 线上地址形如 `https://<你的用户名>.github.io/<仓库名>/`。
+线上地址：**https://qiuyinlan.github.io/-/**（仓库 `qiuyinlan/-`；push 到 `main`
+会由 `.github/workflows/deploy.yml` 自动构建并发布，构建走相对路径，改仓库名也不受影响）。
 
 - 想在线上开云端同步：在仓库 **Settings → Secrets and variables → Actions** 加两个
   Secrets（`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`），然后再推一次（或手动
