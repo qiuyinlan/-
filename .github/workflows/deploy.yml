@@ -48,11 +48,12 @@ jobs:
         run: npm ci
 
       - name: 类型检查 + 构建
-        # 云端同步的两个值从仓库 Secrets 来（Settings → Secrets and variables → Actions）。
-        # 没配 Secrets 也不会失败：只是产物里云端同步关闭，本机功能照旧。
+        # 云端同步的两个值：优先取仓库 Secrets，没有就取 Variables
+        # （Settings → Secrets and variables → Actions，两处都行 —— 这两个值本来就不怕公开）。
+        # 两边都没配也不会失败：只是产物里云端同步关闭，本机功能照旧。
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: 配置 Pages
