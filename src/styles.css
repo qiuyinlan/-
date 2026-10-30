@@ -87,6 +87,18 @@
 .backup-pending strong{font-size:11px;line-height:1.6}
 .backup-note{margin:8px 0 0;color:#8b958d;font-size:9px;line-height:1.7}
 .danger-text{color:#a84640}
+.review-panel{position:relative}
+.review-topline{min-height:40px;align-items:center;padding-right:50px}
+.review-fullscreen-toggle{position:absolute;top:10px;right:10px;width:40px;height:40px}
+.review-immersive{position:fixed;inset:0;z-index:9;display:flex;flex-direction:column;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));border:0;border-radius:0;background:#f5f7f4}
+.review-immersive .review-fullscreen-toggle{top:max(16px,env(safe-area-inset-top));right:max(16px,env(safe-area-inset-right))}
+.review-immersive .review-topline{flex:none}
+.review-immersive .flashcard{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:safe center;overflow-y:auto;overflow-wrap:anywhere;margin-top:12px;padding:24px;background:#fff}
+.review-immersive .card-prompt{font-size:22px;line-height:1.7}
+.review-immersive .card-answer{width:min(600px,100%);font-size:18px}
+.review-immersive .rate-actions{flex:none;margin-top:12px}
+.review-immersive .rate-actions button{flex:1;min-height:48px;font-size:13px}
+.review-immersive .review-empty{flex:1;justify-content:center;flex-wrap:wrap}
 .round-page{position:relative}
 .immersive-toggle{position:absolute;right:0;top:0;z-index:1;width:40px;height:40px}
 .round-toolbar{padding-right:50px;min-height:40px}

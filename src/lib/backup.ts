@@ -121,6 +121,7 @@ function normalizeCard(value: unknown, deckIndex: number, cardIndex: number): Ca
     stage: typeof value.stage === "number" && value.stage >= 0 ? value.stage : 0,
     dueAt: typeof value.dueAt === "number" ? value.dueAt : Date.now(),
     lastReviewed: typeof value.lastReviewed === "number" ? value.lastReviewed : undefined,
+    reviewSkipRound: typeof value.reviewSkipRound === "number" && Number.isInteger(value.reviewSkipRound) && value.reviewSkipRound > 0 ? value.reviewSkipRound : undefined,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : undefined,
   };
 }

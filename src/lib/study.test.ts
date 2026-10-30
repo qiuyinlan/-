@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
-  advanceEbbinghaus, Card, countBlanks, MAX_CARD_CHARS, mergeIntoContextCards, oneClickCloze,
+  advanceEbbinghaus, Card, countBlanks, MAX_CARD_CHARS, mergeIntoContextCards, nextRoundCardIndex, oneClickCloze,
 } from "./study";
+
+describe("round review skips", () => {
+  const card = (id: string, reviewSkipRound?: number): Card => ({ id, kind: "qa", front: id, back: id, roundSeen: 0, stage: 0, dueAt: 0, reviewSkipRound });
+  const deck = { id: "deck", name: "deck", createdAt: 0, rounds: 2, cards: [card("a", 3), card("b"), card("c", 3)] };
+
+  it("skips reviewed cards throughout the current round", () => {
+    expect(nextRoundCardIndex(deck)).toBe(1);
+    expect(nextRoundCardIndex(deck, 2)).toBe(-1);
+    expect(nextRoundCardIndex({ ...deck, cards: [card("a", 3)] })).toBe(-1);
+  });
+
+  it("shows those cards again in the next round", () => {
+    expect(nextRoundCardIndex({ ...deck, rounds: 3 })).toBe(0);
+  });
+});
 
 describe("one-click cloze generation", () => {
   const text = "有效复习是学习的重要方法，复习间隔以1天、2天为宜。";

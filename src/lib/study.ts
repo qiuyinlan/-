@@ -9,6 +9,7 @@ export type Card = {
   stage: number;
   dueAt: number;
   lastReviewed?: number;
+  reviewSkipRound?: number;
   /** 最后一次改动的时间（复习进度变化时刷新；云端合并按它比新旧） */
   updatedAt?: number;
 };
@@ -49,6 +50,10 @@ export function advanceEbbinghaus(card: Card, remembered: boolean, now = Date.no
   const stage = remembered ? Math.min(card.stage + 1, EBBINGHAUS_DAYS.length - 1) : 0;
   const delay = remembered ? EBBINGHAUS_DAYS[stage] : 1;
   return { ...card, stage, lastReviewed: now, dueAt: now + delay * 24 * 60 * 60 * 1000, updatedAt: now };
+}
+
+export function nextRoundCardIndex(deck: Deck, start = 0): number {
+  return deck.cards.findIndex((card, index) => index >= start && card.reviewSkipRound !== deck.rounds + 1);
 }
 
 export function splitSentences(text: string): string[] {

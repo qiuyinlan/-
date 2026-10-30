@@ -9,7 +9,7 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import mammoth from "mammoth";
 import {
   advanceEbbinghaus, countBlanks, createCard, Deck, dueCards, EBBINGHAUS_DAYS, formatDue,
-  makeId, oneClickCloze, splitMaterial, Card,
+  makeId, nextRoundCardIndex, oneClickCloze, splitMaterial, Card,
 } from "./lib/study";
 import { ClozeText, everyBlank, toggleBlank } from "./components/ClozeText";
 import { generateCards, GenerateError, Progress, SEGMENT_CHARS, Usage } from "./lib/generate";
@@ -81,9 +81,17 @@ export default function App() {
   const [activeDeckId, setActiveDeckId] = useState<string | null>(() => readDecks()[0]?.id ?? null);
   const [view, setView] = useState<View>("today");
   const [immersiveRound, setImmersiveRound] = useState(false);
+  const [immersiveReview, setImmersiveReview] = useState(false);
   useEffect(() => {
     if (view !== "round") setImmersiveRound(false);
+    if (view !== "today") setImmersiveReview(false);
   }, [view]);
+  useEffect(() => {
+    if (!immersiveReview) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setImmersiveReview(false); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [immersiveReview]);
   useEffect(() => {
     if (!immersiveRound) return;
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setImmersiveRound(false); };
@@ -401,21 +409,29 @@ export default function App() {
 
   function startRound() {
     if (!activeDeck?.cards.length) return;
-    setRoundIndex(0);
+    const nextIndex = nextRoundCardIndex(activeDeck);
+    setRoundIndex(Math.max(0, nextIndex));
     setRoundShown(new Set());
     setRoundAnswerShown(false);
-    setRoundDone(false);
+    setRoundDone(nextIndex === -1);
     setView("round");
+    if (nextIndex === -1) completeRound(activeDeck);
   }
 
   function finishRoundCard() {
     if (!activeDeck) return;
-    if (roundIndex + 1 < activeDeck.cards.length) {
-      setRoundIndex((index) => index + 1);
+    const nextIndex = nextRoundCardIndex(activeDeck, roundIndex + 1);
+    if (nextIndex !== -1) {
+      setRoundIndex(nextIndex);
       setRoundShown(new Set());
       setRoundAnswerShown(false);
       return;
     }
+    completeRound(activeDeck);
+    setRoundDone(true);
+  }
+
+  function completeRound(activeDeck: Deck) {
     const now = Date.now();
     updateDecks((current) => current.map((deck) => deck.id === activeDeck.id ? {
       ...deck,
@@ -423,14 +439,13 @@ export default function App() {
       updatedAt: now,
       cards: deck.cards.map((card) => ({ ...card, roundSeen: card.roundSeen + 1, updatedAt: now })),
     } : deck));
-    setRoundDone(true);
   }
 
   function rateReview(remembered: boolean) {
     if (!activeDeck || !due[0]) return;
     const card = due[0];
     const now = Date.now();
-    const next = advanceEbbinghaus(card, remembered, now);
+    const next = { ...advanceEbbinghaus(card, remembered, now), reviewSkipRound: activeDeck.rounds + 1 };
     updateDecks((current) => current.map((deck) => deck.id === activeDeck.id
       ? { ...deck, updatedAt: now, cards: deck.cards.map((item) => item.id === card.id ? next : item) }
       : deck));
@@ -615,7 +630,8 @@ export default function App() {
                 <button className="button-primary" onClick={startRound} disabled={!activeDeck.cards.length}>开始一轮 <ChevronRight size={16} /></button>
               </div>
               <div className="section-heading section-spaced"><div><h2>艾宾浩斯复习</h2><p>根据复习进度安排下一次回想</p></div><span className="tag tag-green">间隔记忆</span></div>
-              <div className="review-panel">
+              <div className={`review-panel ${immersiveReview ? "review-immersive" : ""}`}>
+                {due.length > 0 && <button className="icon-button review-fullscreen-toggle" title={immersiveReview ? "退出全屏" : "全屏复习"} aria-label={immersiveReview ? "退出全屏" : "全屏复习"} onClick={() => setImmersiveReview((open) => !open)}>{immersiveReview ? <Minimize2 size={19} /> : <Maximize2 size={19} />}</button>}
                 {due.length ? <>
                   <div className="review-topline"><span className="review-counter">今日到期 <b>{due.length}</b></span><span className="review-position">{activeDeck.cards.length - due.length + 1} / {activeDeck.cards.length}</span></div>
                   <div className="flashcard" onClick={toggleReviewAll} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") toggleReviewAll(); }}>
@@ -628,7 +644,7 @@ export default function App() {
                       : (reviewAllShown ? "想起来了吗？选择记忆情况" : "点空白处显示答案")}</div>
                   </div>
                   {reviewAllShown && <div className="rate-actions"><button className="button-soft" onClick={() => rateReview(false)}>没记住 <span>明日再复习</span></button><button className="button-primary" onClick={() => rateReview(true)}><Check size={16} />记住了 <span>{formatDue(Date.now() + EBBINGHAUS_DAYS[Math.min(due[0].stage + 1, EBBINGHAUS_DAYS.length - 1)] * 86400000)}</span></button></div>}
-                </> : <div className="review-empty"><span className="done-mark"><Check size={20} /></span><div><strong>今天没有到期卡片</strong><span>{activeDeck.cards.length ? `下一张 ${formatDue(Math.min(...activeDeck.cards.map((card) => card.dueAt)))}` : "导入材料，创建你的第一组卡片"}</span></div><button className="text-button" onClick={() => setView("create")}>导入材料 <ChevronRight size={15} /></button></div>}
+                </> : <div className="review-empty"><span className="done-mark"><Check size={20} /></span><div><strong>今天没有到期卡片</strong><span>{activeDeck.cards.length ? `下一张 ${formatDue(Math.min(...activeDeck.cards.map((card) => card.dueAt)))}` : "导入材料，创建你的第一组卡片"}</span></div><button className="text-button" onClick={() => { setImmersiveReview(false); setView("create"); }}>导入材料 <ChevronRight size={15} /></button>{immersiveReview && <button className="button-outline" onClick={() => setImmersiveReview(false)}>返回总览</button>}</div>}
               </div>
             </section>
             <aside className="round-aside"><div className="aside-title"><h3>背诵轮次</h3><span className="tag">当前卡组</span></div><div className="round-number">{activeDeck.rounds}<small>轮</small></div><p>完整过完一遍卡组，轮次就会累加。</p><div className="round-progress"><span style={{ width: `${activeDeck.cards.length ? Math.min(100, activeDeck.cards.filter((card) => card.roundSeen > 0).length / activeDeck.cards.length * 100) : 0}%` }} /></div><div className="round-foot"><span>卡组掌握进度</span><b>{activeDeck.cards.filter((card) => card.roundSeen > 0).length}/{activeDeck.cards.length}</b></div><button className="outline-button" onClick={startRound}>继续逐轮背诵 <ChevronRight size={15} /></button><div className="interval-block"><div className="interval-title"><span>复习间隔</span><CircleHelp size={15} /></div><div className="interval-pills">{[0, 1, 2, 4, 7, 15].map((day) => <span key={day}>{day === 0 ? "今天" : `${day}天`}</span>)}</div></div></aside>
@@ -674,7 +690,7 @@ export default function App() {
 
         {view === "create" && drafts.length > 0 && <section className="draft-section"><div className="draft-heading"><div><span className="eyebrow">CARD PREVIEW</span><h2>检查卡片 <span>{drafts.length}</span>{busy && <em className="draft-live">仍在生成…</em>}</h2></div><div className="draft-actions"><button className="button-outline" onClick={() => addManualCard("qa")}><Plus size={15} />再加一张</button><button className="button-primary" onClick={() => void saveDrafts()} disabled={!dataReady || savingDrafts}>{savingDrafts ? <LoaderCircle className="spin" size={15} /> : <Check size={16} />}{savingDrafts ? "保存中" : addToDeckId ? `追加 ${drafts.length} 张` : `保存 ${drafts.length} 张`}</button></div></div><div className="draft-grid">{drafts.map((card, index) => <article className="draft-card" key={index}><div className="draft-card-head"><span>{card.kind === "cloze" ? "挖空" : "问答"} · {String(index + 1).padStart(2, "0")}</span><button className="icon-button small-icon" title="删除卡片" onClick={() => setDrafts((items) => items.filter((_, i) => i !== index))}><Trash2 size={15} /></button></div><label className="section-field">所属章节<input value={card.section || ""} placeholder="例如：一、链路形态" onChange={(e) => setDrafts((items) => items.map((item, i) => i === index ? { ...item, section: e.target.value } : item))} /></label><label>正面<textarea value={card.front} onChange={(e) => setDrafts((items) => items.map((item, i) => i === index ? { ...item, front: e.target.value } : item))} /></label><label>答案<textarea value={card.back} onChange={(e) => setDrafts((items) => items.map((item, i) => i === index ? { ...item, back: e.target.value } : item))} /></label></article>)}</div></section>}
 
-        {view === "round" && <section className={`page-content round-page ${immersiveRound ? "round-immersive" : ""}`}><button className="icon-button immersive-toggle" title={immersiveRound ? "退出全屏" : "全屏背诵"} aria-label={immersiveRound ? "退出全屏" : "全屏背诵"} onClick={() => setImmersiveRound((open) => !open)}>{immersiveRound ? <Minimize2 size={19} /> : <Maximize2 size={19} />}</button>{!activeDeck ? <EmptyState onCreate={() => setView("create")} /> : roundDone ? <div className="round-finished"><span className="done-mark large-done"><Check size={25} /></span><p className="eyebrow">ROUND COMPLETE</p><h2>第 {activeDeck.rounds} 轮完成</h2><p>这一轮的 {activeDeck.cards.length} 张卡片已全部过完。</p><div className="finished-actions"><button className="button-primary" onClick={startRound}>再背一轮 <ChevronRight size={16} /></button><button className="button-outline" onClick={() => setView("today")}>返回总览</button></div></div> : currentRoundCard ? <><div className="round-toolbar"><button className="back-button" onClick={() => setView("today")}><ChevronLeft size={16} />学习总览</button><div className="round-title">{activeDeck.name}<span>第 {activeDeck.rounds + 1} 轮</span></div><div className="round-counter">{roundIndex + 1} <span>/</span> {activeDeck.cards.length}</div></div><div className="round-track"><span style={{ width: `${((roundIndex + (roundAllShown ? 0.5 : 0)) / activeDeck.cards.length) * 100}%` }} /></div><div className="round-card" onClick={toggleRoundAll} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") toggleRoundAll(); }}><div className="current-section"><span>当前章节</span><strong>{currentRoundCard.section || "未分类"}</strong></div><span className="card-type">{currentRoundCard.kind === "cloze" ? "挖空回想" : "问答回想"}</span><div className="round-prompt">{currentRoundCard.kind === "cloze" ? <ClozeText text={currentRoundCard.front} shown={roundShown} onToggle={toggleRoundBlank} /> : currentRoundCard.front}</div>{roundAllShown && <div className="round-answer">{currentRoundCard.back}</div>}<div className="card-hint">{currentRoundCard.kind === "cloze" ? (roundAllShown ? "看完后继续下一张" : "点空看答案 · 点空白处全部显示") : (roundAllShown ? "看完后继续下一张" : "想好答案后，点空白处显示")}</div></div><div className="round-bottom"><span>已完成 {activeDeck.rounds} 轮 · 每张都过完后记为新的一轮</span><button className="button-primary" onClick={() => roundAllShown ? finishRoundCard() : toggleRoundAll()}>{roundAllShown ? roundIndex + 1 === activeDeck.cards.length ? "完成本轮" : "下一张" : "显示答案"}<ChevronRight size={16} /></button></div></> : null}</section>}
+        {view === "round" && <section className={`page-content round-page ${immersiveRound ? "round-immersive" : ""}`}><button className="icon-button immersive-toggle" title={immersiveRound ? "退出全屏" : "全屏背诵"} aria-label={immersiveRound ? "退出全屏" : "全屏背诵"} onClick={() => setImmersiveRound((open) => !open)}>{immersiveRound ? <Minimize2 size={19} /> : <Maximize2 size={19} />}</button>{!activeDeck ? <EmptyState onCreate={() => setView("create")} /> : roundDone ? <div className="round-finished"><span className="done-mark large-done"><Check size={25} /></span><p className="eyebrow">ROUND COMPLETE</p><h2>第 {activeDeck.rounds} 轮完成</h2><p>这一轮的 {activeDeck.cards.length} 张卡片已全部过完。</p><div className="finished-actions"><button className="button-primary" onClick={startRound}>再背一轮 <ChevronRight size={16} /></button><button className="button-outline" onClick={() => setView("today")}>返回总览</button></div></div> : currentRoundCard ? <><div className="round-toolbar"><button className="back-button" onClick={() => setView("today")}><ChevronLeft size={16} />学习总览</button><div className="round-title">{activeDeck.name}<span>第 {activeDeck.rounds + 1} 轮</span></div><div className="round-counter">{roundIndex + 1} <span>/</span> {activeDeck.cards.length}</div></div><div className="round-track"><span style={{ width: `${((roundIndex + (roundAllShown ? 0.5 : 0)) / activeDeck.cards.length) * 100}%` }} /></div><div className="round-card" onClick={toggleRoundAll} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") toggleRoundAll(); }}><div className="current-section"><span>当前章节</span><strong>{currentRoundCard.section || "未分类"}</strong></div><span className="card-type">{currentRoundCard.kind === "cloze" ? "挖空回想" : "问答回想"}</span><div className="round-prompt">{currentRoundCard.kind === "cloze" ? <ClozeText text={currentRoundCard.front} shown={roundShown} onToggle={toggleRoundBlank} /> : currentRoundCard.front}</div>{roundAllShown && <div className="round-answer">{currentRoundCard.back}</div>}<div className="card-hint">{currentRoundCard.kind === "cloze" ? (roundAllShown ? "看完后继续下一张" : "点空看答案 · 点空白处全部显示") : (roundAllShown ? "看完后继续下一张" : "想好答案后，点空白处显示")}</div></div><div className="round-bottom"><span>已完成 {activeDeck.rounds} 轮 · 每张都过完后记为新的一轮</span><button className="button-primary" onClick={() => roundAllShown ? finishRoundCard() : toggleRoundAll()}>{roundAllShown ? nextRoundCardIndex(activeDeck, roundIndex + 1) === -1 ? "完成本轮" : "下一张" : "显示答案"}<ChevronRight size={16} /></button></div></> : null}</section>}
 
         {view === "cards" && <section className="page-content cards-page">{activeDeck ? <><div className="section-heading cards-heading"><div><h2>{activeDeck.name}</h2><p>{activeDeck.cards.length} 张卡片 · 已背诵 {activeDeck.rounds} 轮</p></div><div className="card-tools"><button className="button-outline" onClick={() => { setDeckName(activeDeck.name); setAddToDeckId(activeDeck.id); setDrafts([]); setView("create"); }}><Plus size={15} />继续加卡</button><button className="button-primary" onClick={startRound}>逐轮背诵 <ChevronRight size={15} /></button><button className="icon-button danger-icon" title="删除卡组" onClick={() => askDeleteDeck(activeDeck.id)}><Trash2 size={16} /></button></div></div><div className="card-list">{activeDeck.cards.map((card, i) => <article className="saved-card" key={card.id}><span className="saved-index">{String(i + 1).padStart(2, "0")}</span><div className="saved-main"><div className="saved-front"><span className={`tag ${card.kind === "cloze" ? "tag-amber" : "tag-blue"}`}>{card.kind === "cloze" ? "挖空" : "问答"}</span><p>{card.kind === "cloze" ? <ClozeText text={card.front} /> : card.front}</p></div><p className="saved-back">{card.back}</p></div><div className="saved-meta"><span>第 {card.roundSeen} 轮</span><span className={card.dueAt <= Date.now() ? "due-now" : ""}>{formatDue(card.dueAt)}</span></div><button className="icon-button small-icon" title="删除卡片" onClick={() => deleteCard(card.id)}><Trash2 size={15} /></button></article>)}{!activeDeck.cards.length && <EmptyState onCreate={() => setView("create")} />}</div></> : <EmptyState onCreate={() => setView("create")} />}</section>}
       </main>

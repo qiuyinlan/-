@@ -176,6 +176,7 @@ function cardShape(card: Card) {
     stage: card.stage,
     dueAt: card.dueAt,
     lastReviewed: card.lastReviewed,
+    reviewSkipRound: card.reviewSkipRound,
   };
 }
 
