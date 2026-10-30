@@ -123,6 +123,8 @@ export default function App() {
   const [model, setModel] = useState(modelPrefs.model);
   const [apiKey, setApiKey] = useState(() => sessionStorage.getItem("huixiang-api-key") || "");
   const [roundIndex, setRoundIndex] = useState(0);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const [reviewedThisSession, setReviewedThisSession] = useState<Set<string>>(() => new Set());
   const [roundShown, setRoundShown] = useState<Set<number>>(() => new Set());
   const [roundAnswerShown, setRoundAnswerShown] = useState(false);
   const [roundDone, setRoundDone] = useState(false);
@@ -252,7 +254,7 @@ export default function App() {
   }, [decks, dataReady]);
 
   const activeDeck = decks.find((deck) => deck.id === activeDeckId) ?? null;
-  const due = useMemo(() => activeDeck ? dueCards(activeDeck) : [], [activeDeck]);
+  const due = useMemo(() => activeDeck ? dueCards(activeDeck).filter((card) => !reviewedThisSession.has(card.id)) : [], [activeDeck, reviewedThisSession]);
   const totalDue = decks.reduce((sum, deck) => sum + dueCards(deck).length, 0);
 
   function updateDecks(next: Deck[] | ((current: Deck[]) => Deck[])) {
@@ -431,24 +433,46 @@ export default function App() {
     setRoundDone(true);
   }
 
+  function rememberRoundCard() {
+    if (!activeDeck || !currentRoundCard) return;
+    const now = Date.now();
+    updateDecks((current) => current.map((deck) => deck.id === activeDeck.id ? {
+      ...deck,
+      updatedAt: now,
+      cards: deck.cards.map((card) => card.id === currentRoundCard.id
+        ? { ...card, roundSeen: card.roundSeen + 1, reviewSkipRound: deck.rounds + 1, updatedAt: now }
+        : card),
+    } : deck));
+    finishRoundCard();
+  }
+
   function completeRound(activeDeck: Deck) {
     const now = Date.now();
     updateDecks((current) => current.map((deck) => deck.id === activeDeck.id ? {
       ...deck,
       rounds: deck.rounds + 1,
       updatedAt: now,
-      cards: deck.cards.map((card) => ({ ...card, roundSeen: card.roundSeen + 1, updatedAt: now })),
+      cards: deck.cards,
     } : deck));
   }
 
   function rateReview(remembered: boolean) {
-    if (!activeDeck || !due[0]) return;
-    const card = due[0];
+    const card = due[reviewIndex];
+    if (!activeDeck || !card) return;
     const now = Date.now();
-    const next = { ...advanceEbbinghaus(card, remembered, now), reviewSkipRound: activeDeck.rounds + 1 };
-    updateDecks((current) => current.map((deck) => deck.id === activeDeck.id
-      ? { ...deck, updatedAt: now, cards: deck.cards.map((item) => item.id === card.id ? next : item) }
-      : deck));
+    if (remembered) {
+      const next = { ...advanceEbbinghaus(card, true, now), roundSeen: card.roundSeen + 1, reviewSkipRound: activeDeck.rounds + 1 };
+      updateDecks((current) => current.map((deck) => deck.id === activeDeck.id
+        ? { ...deck, updatedAt: now, cards: deck.cards.map((item) => item.id === card.id ? next : item) }
+        : deck));
+    } else {
+      const next = advanceEbbinghaus(card, false, now);
+      updateDecks((current) => current.map((deck) => deck.id === activeDeck.id
+        ? { ...deck, updatedAt: now, cards: deck.cards.map((item) => item.id === card.id ? next : item) }
+        : deck));
+    }
+    setReviewedThisSession((current) => new Set(current).add(card.id));
+    setReviewIndex((index) => Math.min(index, Math.max(0, due.length - 2)));
     setReviewShown(new Set());
     setReviewAnswerShown(false);
   }
@@ -507,7 +531,10 @@ export default function App() {
   }
 
   const currentRoundCard = activeDeck?.cards[roundIndex];
-  const reviewCard = due[0];
+  const reviewCard = due[reviewIndex];
+  useEffect(() => {
+    if (reviewIndex >= due.length) setReviewIndex(Math.max(0, due.length - 1));
+  }, [due.length, reviewIndex]);
 
   // 换卡（复习或环比上一张）时，把“点了哪几个空”的状态清掉。
   useEffect(() => {
@@ -633,17 +660,17 @@ export default function App() {
               <div className={`review-panel ${immersiveReview ? "review-immersive" : ""}`}>
                 {due.length > 0 && <button className="icon-button review-fullscreen-toggle" title={immersiveReview ? "退出全屏" : "全屏复习"} aria-label={immersiveReview ? "退出全屏" : "全屏复习"} onClick={() => setImmersiveReview((open) => !open)}>{immersiveReview ? <Minimize2 size={19} /> : <Maximize2 size={19} />}</button>}
                 {due.length ? <>
-                  <div className="review-topline"><span className="review-counter">今日到期 <b>{due.length}</b></span><span className="review-position">{activeDeck.cards.length - due.length + 1} / {activeDeck.cards.length}</span></div>
+                  <div className="review-topline"><span className="review-counter">今日到期 <b>{due.length}</b></span><span className="review-position">{reviewIndex + 1} / {due.length}</span></div>
                   <div className="flashcard" onClick={toggleReviewAll} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") toggleReviewAll(); }}>
-                    <div className="current-section"><span>当前章节</span><strong>{due[0].section || "未分类"}</strong></div>
-                    <div className="card-type">{due[0].kind === "cloze" ? "挖空回想" : "问答回想"}</div>
-                    <div className="card-prompt">{due[0].kind === "cloze" ? <ClozeText text={due[0].front} shown={reviewShown} onToggle={toggleReviewBlank} /> : due[0].front}</div>
-                    {reviewAllShown && <div className="card-answer">{due[0].back}</div>}
-                    <div className="card-hint">{due[0].kind === "cloze"
+                    <div className="current-section"><span>当前章节</span><strong>{reviewCard.section || "未分类"}</strong></div>
+                    <div className="card-type">{reviewCard.kind === "cloze" ? "挖空回想" : "问答回想"}</div>
+                    <div className="card-prompt">{reviewCard.kind === "cloze" ? <ClozeText text={reviewCard.front} shown={reviewShown} onToggle={toggleReviewBlank} /> : reviewCard.front}</div>
+                    {reviewAllShown && <div className="card-answer">{reviewCard.back}</div>}
+                    <div className="card-hint">{reviewCard.kind === "cloze"
                       ? (reviewAllShown ? "全部显示了，选择记忆情况" : "点空看答案 · 点空白处全部显示")
                       : (reviewAllShown ? "想起来了吗？选择记忆情况" : "点空白处显示答案")}</div>
                   </div>
-                  {reviewAllShown && <div className="rate-actions"><button className="button-soft" onClick={() => rateReview(false)}>没记住 <span>明日再复习</span></button><button className="button-primary" onClick={() => rateReview(true)}><Check size={16} />记住了 <span>{formatDue(Date.now() + EBBINGHAUS_DAYS[Math.min(due[0].stage + 1, EBBINGHAUS_DAYS.length - 1)] * 86400000)}</span></button></div>}
+                  {reviewAllShown && <div className="rate-actions"><button className="button-soft" onClick={() => rateReview(false)}>没记住 <span>明日再复习</span></button><button className="button-primary" onClick={() => rateReview(true)}><Check size={16} />记住了 <span>{formatDue(Date.now() + EBBINGHAUS_DAYS[Math.min(reviewCard.stage + 1, EBBINGHAUS_DAYS.length - 1)] * 86400000)}</span></button></div>}
                 </> : <div className="review-empty"><span className="done-mark"><Check size={20} /></span><div><strong>今天没有到期卡片</strong><span>{activeDeck.cards.length ? `下一张 ${formatDue(Math.min(...activeDeck.cards.map((card) => card.dueAt)))}` : "导入材料，创建你的第一组卡片"}</span></div><button className="text-button" onClick={() => { setImmersiveReview(false); setView("create"); }}>导入材料 <ChevronRight size={15} /></button>{immersiveReview && <button className="button-outline" onClick={() => setImmersiveReview(false)}>返回总览</button>}</div>}
               </div>
             </section>
@@ -695,6 +722,15 @@ export default function App() {
         {view === "cards" && <section className="page-content cards-page">{activeDeck ? <><div className="section-heading cards-heading"><div><h2>{activeDeck.name}</h2><p>{activeDeck.cards.length} 张卡片 · 已背诵 {activeDeck.rounds} 轮</p></div><div className="card-tools"><button className="button-outline" onClick={() => { setDeckName(activeDeck.name); setAddToDeckId(activeDeck.id); setDrafts([]); setView("create"); }}><Plus size={15} />继续加卡</button><button className="button-primary" onClick={startRound}>逐轮背诵 <ChevronRight size={15} /></button><button className="icon-button danger-icon" title="删除卡组" onClick={() => askDeleteDeck(activeDeck.id)}><Trash2 size={16} /></button></div></div><div className="card-list">{activeDeck.cards.map((card, i) => <article className="saved-card" key={card.id}><span className="saved-index">{String(i + 1).padStart(2, "0")}</span><div className="saved-main"><div className="saved-front"><span className={`tag ${card.kind === "cloze" ? "tag-amber" : "tag-blue"}`}>{card.kind === "cloze" ? "挖空" : "问答"}</span><p>{card.kind === "cloze" ? <ClozeText text={card.front} /> : card.front}</p></div><p className="saved-back">{card.back}</p></div><div className="saved-meta"><span>第 {card.roundSeen} 轮</span><span className={card.dueAt <= Date.now() ? "due-now" : ""}>{formatDue(card.dueAt)}</span></div><button className="icon-button small-icon" title="删除卡片" onClick={() => deleteCard(card.id)}><Trash2 size={15} /></button></article>)}{!activeDeck.cards.length && <EmptyState onCreate={() => setView("create")} />}</div></> : <EmptyState onCreate={() => setView("create")} />}</section>}
       </main>
 
+      {(view === "round" && activeDeck && !roundDone) && <CardNavigator
+        cards={activeDeck.cards}
+        index={roundIndex}
+        onChange={setRoundIndex}
+        onRemember={roundAllShown && currentRoundCard?.reviewSkipRound !== activeDeck.rounds + 1 ? rememberRoundCard : undefined}
+        rememberLabel="记住了"
+      />}
+      {(view === "today" && due.length > 0) && <CardNavigator cards={due} index={reviewIndex} onChange={setReviewIndex} />}
+
       {deleteDeckId && (() => {
         const target = decks.find((deck) => deck.id === deleteDeckId);
         if (!target) return null;
@@ -721,4 +757,27 @@ export default function App() {
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return <div className="empty-state"><span className="empty-icon"><FolderPlus size={22} /></span><h2>这里还没有卡片</h2><p>导入一份材料，开始建立自己的背诵卡组。</p><button className="button-primary" onClick={onCreate}>导入材料 <ChevronRight size={16} /></button></div>;
+}
+
+function CardNavigator({ cards, index, onChange, onRemember, rememberLabel }: {
+  cards: Card[];
+  index: number;
+  onChange: (index: number) => void;
+  onRemember?: () => void;
+  rememberLabel?: string;
+}) {
+  if (!cards.length) return null;
+  const sections = [...new Set(cards.map((card) => card.section || "未分类"))];
+  const currentSection = cards[index]?.section || "未分类";
+  const sectionCards = cards.map((card, cardIndex) => ({ card, cardIndex })).filter(({ card }) => (card.section || "未分类") === currentSection);
+  return <nav className="card-navigator" aria-label="卡片目录">
+    <button className="button-outline navigator-step" aria-label="上一张" title="上一张" disabled={index <= 0} onClick={() => onChange(index - 1)}><ChevronLeft size={18} /><span>上一张</span></button>
+    <select aria-label="切换章节" value={currentSection} onChange={(event) => {
+      const first = cards.findIndex((card) => (card.section || "未分类") === event.target.value);
+      if (first >= 0) onChange(first);
+    }}>{sections.map((section) => <option key={section} value={section}>{section}</option>)}</select>
+    <select aria-label="切换章节内卡片" value={index} onChange={(event) => onChange(Number(event.target.value))}>{sectionCards.map(({ card, cardIndex }) => <option key={card.id} value={cardIndex}>{cardIndex + 1}. {card.front.replace(/\{\{c\d+::([^}]+)\}\}/g, "$1").slice(0, 32)}</option>)}</select>
+    {onRemember && <button className="button-primary navigator-remember" onClick={onRemember}><Check size={16} />{rememberLabel}</button>}
+    <button className="button-outline navigator-step" aria-label="下一张" title="下一张" disabled={index >= cards.length - 1} onClick={() => onChange(index + 1)}><span>下一张</span><ChevronRight size={18} /></button>
+  </nav>;
 }

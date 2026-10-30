@@ -99,6 +99,13 @@
 .review-immersive .rate-actions{flex:none;margin-top:12px}
 .review-immersive .rate-actions button{flex:1;min-height:48px;font-size:13px}
 .review-immersive .review-empty{flex:1;justify-content:center;flex-wrap:wrap}
+.card-navigator{position:fixed;left:50%;bottom:max(12px,env(safe-area-inset-bottom));z-index:12;transform:translateX(-50%);width:min(760px,calc(100vw - 24px));display:flex;align-items:center;gap:8px;padding:9px;background:#fff;border:1px solid var(--line);border-radius:7px;box-shadow:0 8px 26px #18241c1a}
+.card-navigator select{min-width:0;flex:1;height:38px;padding:0 8px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink);font-size:12px}
+.card-navigator .navigator-step{min-height:38px;padding:0 8px;gap:4px}
+.card-navigator .navigator-step span{font-size:11px}
+.card-navigator .navigator-remember{min-height:38px;margin:0;padding:0 10px}
+.round-immersive~.card-navigator,.review-immersive~.card-navigator{bottom:max(12px,env(safe-area-inset-bottom))}
+@media(max-width:600px){.card-navigator{gap:5px;padding:7px}.card-navigator select{height:36px;font-size:10px}.card-navigator .navigator-step{width:38px;padding:0;justify-content:center}.card-navigator .navigator-step span{display:none}.card-navigator .navigator-remember{padding:0 8px;font-size:10px}}
 .round-page{position:relative}
 .immersive-toggle{position:absolute;right:0;top:0;z-index:1;width:40px;height:40px}
 .round-toolbar{padding-right:50px;min-height:40px}
@@ -113,6 +120,9 @@
 .round-immersive .round-bottom{flex:none;margin-top:12px}
 .round-immersive .round-bottom .button-primary{min-height:48px;width:100%;font-size:14px}
 .round-immersive .round-finished{flex:1;min-height:0}
+.round-immersive .round-bottom{padding-bottom:62px}
+.review-immersive .rate-actions{padding-bottom:62px}
+@supports selector(.app-shell:has(.card-navigator)){.app-shell:has(.card-navigator) .main-area{padding-bottom:110px}}
 .mobile-header,.sidebar-close,.sidebar-backdrop{display:none}
 @media(max-width:760px){
   .mobile-header{position:sticky;top:0;z-index:3;height:54px;display:flex;align-items:center;gap:12px;padding:0 14px;background:#fff;border-bottom:1px solid var(--line);font-size:16px;font-weight:700}
