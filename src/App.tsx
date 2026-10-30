@@ -9,7 +9,7 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import mammoth from "mammoth";
 import {
   advanceEbbinghaus, countBlanks, createCard, Deck, dueCards, EBBINGHAUS_DAYS, formatDue,
-  makeId, nextRoundCardIndex, oneClickCloze, splitMaterial, Card,
+  makeId, oneClickCloze, splitMaterial, Card,
 } from "./lib/study";
 import { ClozeText, everyBlank, toggleBlank } from "./components/ClozeText";
 import { generateCards, GenerateError, Progress, SEGMENT_CHARS, Usage } from "./lib/generate";
@@ -123,11 +123,16 @@ export default function App() {
   const [model, setModel] = useState(modelPrefs.model);
   const [apiKey, setApiKey] = useState(() => sessionStorage.getItem("huixiang-api-key") || "");
   const [roundIndex, setRoundIndex] = useState(0);
+  const [roundOrder, setRoundOrder] = useState<string[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
+  const [reviewOrder, setReviewOrder] = useState<string[]>([]);
+  const [deferredRoundCards, setDeferredRoundCards] = useState<Set<string>>(() => new Set());
+  const [deferredReviewCards, setDeferredReviewCards] = useState<Set<string>>(() => new Set());
   const [reviewedThisSession, setReviewedThisSession] = useState<Set<string>>(() => new Set());
   const [roundShown, setRoundShown] = useState<Set<number>>(() => new Set());
   const [roundAnswerShown, setRoundAnswerShown] = useState(false);
   const [roundDone, setRoundDone] = useState(false);
+  const [roundComplete, setRoundComplete] = useState(false);
   const [reviewShown, setReviewShown] = useState<Set<number>>(() => new Set());
   const [reviewAnswerShown, setReviewAnswerShown] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -254,7 +259,11 @@ export default function App() {
   }, [decks, dataReady]);
 
   const activeDeck = decks.find((deck) => deck.id === activeDeckId) ?? null;
-  const due = useMemo(() => activeDeck ? dueCards(activeDeck).filter((card) => !reviewedThisSession.has(card.id)) : [], [activeDeck, reviewedThisSession]);
+  const dueCandidates = useMemo(() => activeDeck ? dueCards(activeDeck).filter((card) => !reviewedThisSession.has(card.id)) : [], [activeDeck, reviewedThisSession]);
+  const due = useMemo(() => {
+    const byId = new Map(dueCandidates.map((card) => [card.id, card]));
+    return [...reviewOrder.map((id) => byId.get(id)).filter((card): card is Card => Boolean(card)), ...dueCandidates.filter((card) => !reviewOrder.includes(card.id))];
+  }, [dueCandidates, reviewOrder]);
   const totalDue = decks.reduce((sum, deck) => sum + dueCards(deck).length, 0);
 
   function updateDecks(next: Deck[] | ((current: Deck[]) => Deck[])) {
@@ -411,39 +420,77 @@ export default function App() {
 
   function startRound() {
     if (!activeDeck?.cards.length) return;
-    const nextIndex = nextRoundCardIndex(activeDeck);
-    setRoundIndex(Math.max(0, nextIndex));
+    const order = activeDeck.cards.filter((card) => card.reviewSkipRound !== activeDeck.rounds + 1).map((card) => card.id);
+    setRoundOrder(order);
+    setRoundIndex(0);
+    setDeferredRoundCards(new Set());
     setRoundShown(new Set());
     setRoundAnswerShown(false);
-    setRoundDone(nextIndex === -1);
+    setRoundDone(order.length === 0);
+    setRoundComplete(order.length === 0);
     setView("round");
-    if (nextIndex === -1) completeRound(activeDeck);
+    if (order.length === 0) completeRound(activeDeck);
   }
 
-  function finishRoundCard() {
+  function finishRoundCard(alreadyCompleted = false) {
     if (!activeDeck) return;
-    const nextIndex = nextRoundCardIndex(activeDeck, roundIndex + 1);
-    if (nextIndex !== -1) {
-      setRoundIndex(nextIndex);
+    if (roundIndex + 1 < roundOrder.length) {
+      setRoundIndex((index) => index + 1);
       setRoundShown(new Set());
       setRoundAnswerShown(false);
       return;
     }
-    completeRound(activeDeck);
+    const completed = alreadyCompleted || activeDeck.cards.every((card) => card.reviewSkipRound === activeDeck.rounds + 1);
+    if (completed && !alreadyCompleted) completeRound(activeDeck);
+    setRoundComplete(completed);
     setRoundDone(true);
   }
 
   function rememberRoundCard() {
     if (!activeDeck || !currentRoundCard) return;
     const now = Date.now();
+    const willComplete = activeDeck.cards.every((card) => card.id === currentRoundCard.id || card.reviewSkipRound === activeDeck.rounds + 1);
     updateDecks((current) => current.map((deck) => deck.id === activeDeck.id ? {
       ...deck,
+      rounds: willComplete ? deck.rounds + 1 : deck.rounds,
       updatedAt: now,
       cards: deck.cards.map((card) => card.id === currentRoundCard.id
         ? { ...card, roundSeen: card.roundSeen + 1, reviewSkipRound: deck.rounds + 1, updatedAt: now }
         : card),
     } : deck));
-    finishRoundCard();
+    if (willComplete) setRoundComplete(true);
+    finishRoundCard(willComplete);
+  }
+
+  function switchRoundCard(targetIndex: number) {
+    if (!activeDeck || !currentRoundCard || targetIndex < 0 || targetIndex >= roundOrder.length || targetIndex === roundIndex) return;
+    const id = currentRoundCard.id;
+    let order = roundOrder;
+    if (currentRoundCard.reviewSkipRound !== activeDeck.rounds + 1 && !deferredRoundCards.has(id)) {
+      order = [...roundOrder.filter((cardId) => cardId !== id), id];
+      setRoundOrder(order);
+      setDeferredRoundCards((current) => new Set(current).add(id));
+    }
+    const targetId = roundOrder[targetIndex];
+    setRoundIndex(order.indexOf(targetId));
+    setRoundShown(new Set());
+    setRoundAnswerShown(false);
+  }
+
+  function switchReviewCard(targetIndex: number) {
+    if (!reviewCard || targetIndex < 0 || targetIndex >= due.length || targetIndex === reviewIndex) return;
+    const id = reviewCard.id;
+    let order = reviewOrder;
+    if (!deferredReviewCards.has(id)) {
+      order = [...due.map((card) => card.id).filter((cardId) => cardId !== id), id];
+      setReviewOrder(order);
+      setDeferredReviewCards((current) => new Set(current).add(id));
+    }
+    const targetId = due[targetIndex].id;
+    const nextIds = [...order, ...dueCandidates.map((card) => card.id).filter((cardId) => !order.includes(cardId))];
+    setReviewIndex(nextIds.indexOf(targetId));
+    setReviewShown(new Set());
+    setReviewAnswerShown(false);
   }
 
   function completeRound(activeDeck: Deck) {
@@ -472,6 +519,7 @@ export default function App() {
         : deck));
     }
     setReviewedThisSession((current) => new Set(current).add(card.id));
+    if (remembered) setReviewOrder((current) => current.filter((id) => id !== card.id));
     setReviewIndex((index) => Math.min(index, Math.max(0, due.length - 2)));
     setReviewShown(new Set());
     setReviewAnswerShown(false);
@@ -530,7 +578,8 @@ export default function App() {
     event.target.value = "";
   }
 
-  const currentRoundCard = activeDeck?.cards[roundIndex];
+  const currentRoundCard = activeDeck?.cards.find((card) => card.id === roundOrder[roundIndex]);
+  const roundCards = activeDeck ? roundOrder.map((id) => activeDeck.cards.find((card) => card.id === id)).filter((card): card is Card => Boolean(card)) : [];
   const reviewCard = due[reviewIndex];
   useEffect(() => {
     if (reviewIndex >= due.length) setReviewIndex(Math.max(0, due.length - 1));
@@ -717,19 +766,19 @@ export default function App() {
 
         {view === "create" && drafts.length > 0 && <section className="draft-section"><div className="draft-heading"><div><span className="eyebrow">CARD PREVIEW</span><h2>检查卡片 <span>{drafts.length}</span>{busy && <em className="draft-live">仍在生成…</em>}</h2></div><div className="draft-actions"><button className="button-outline" onClick={() => addManualCard("qa")}><Plus size={15} />再加一张</button><button className="button-primary" onClick={() => void saveDrafts()} disabled={!dataReady || savingDrafts}>{savingDrafts ? <LoaderCircle className="spin" size={15} /> : <Check size={16} />}{savingDrafts ? "保存中" : addToDeckId ? `追加 ${drafts.length} 张` : `保存 ${drafts.length} 张`}</button></div></div><div className="draft-grid">{drafts.map((card, index) => <article className="draft-card" key={index}><div className="draft-card-head"><span>{card.kind === "cloze" ? "挖空" : "问答"} · {String(index + 1).padStart(2, "0")}</span><button className="icon-button small-icon" title="删除卡片" onClick={() => setDrafts((items) => items.filter((_, i) => i !== index))}><Trash2 size={15} /></button></div><label className="section-field">所属章节<input value={card.section || ""} placeholder="例如：一、链路形态" onChange={(e) => setDrafts((items) => items.map((item, i) => i === index ? { ...item, section: e.target.value } : item))} /></label><label>正面<textarea value={card.front} onChange={(e) => setDrafts((items) => items.map((item, i) => i === index ? { ...item, front: e.target.value } : item))} /></label><label>答案<textarea value={card.back} onChange={(e) => setDrafts((items) => items.map((item, i) => i === index ? { ...item, back: e.target.value } : item))} /></label></article>)}</div></section>}
 
-        {view === "round" && <section className={`page-content round-page ${immersiveRound ? "round-immersive" : ""}`}><button className="icon-button immersive-toggle" title={immersiveRound ? "退出全屏" : "全屏背诵"} aria-label={immersiveRound ? "退出全屏" : "全屏背诵"} onClick={() => setImmersiveRound((open) => !open)}>{immersiveRound ? <Minimize2 size={19} /> : <Maximize2 size={19} />}</button>{!activeDeck ? <EmptyState onCreate={() => setView("create")} /> : roundDone ? <div className="round-finished"><span className="done-mark large-done"><Check size={25} /></span><p className="eyebrow">ROUND COMPLETE</p><h2>第 {activeDeck.rounds} 轮完成</h2><p>这一轮的 {activeDeck.cards.length} 张卡片已全部过完。</p><div className="finished-actions"><button className="button-primary" onClick={startRound}>再背一轮 <ChevronRight size={16} /></button><button className="button-outline" onClick={() => setView("today")}>返回总览</button></div></div> : currentRoundCard ? <><div className="round-toolbar"><button className="back-button" onClick={() => setView("today")}><ChevronLeft size={16} />学习总览</button><div className="round-title">{activeDeck.name}<span>第 {activeDeck.rounds + 1} 轮</span></div><div className="round-counter">{roundIndex + 1} <span>/</span> {activeDeck.cards.length}</div></div><div className="round-track"><span style={{ width: `${((roundIndex + (roundAllShown ? 0.5 : 0)) / activeDeck.cards.length) * 100}%` }} /></div><div className="round-card" onClick={toggleRoundAll} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") toggleRoundAll(); }}><div className="current-section"><span>当前章节</span><strong>{currentRoundCard.section || "未分类"}</strong></div><span className="card-type">{currentRoundCard.kind === "cloze" ? "挖空回想" : "问答回想"}</span><div className="round-prompt">{currentRoundCard.kind === "cloze" ? <ClozeText text={currentRoundCard.front} shown={roundShown} onToggle={toggleRoundBlank} /> : currentRoundCard.front}</div>{roundAllShown && <div className="round-answer">{currentRoundCard.back}</div>}<div className="card-hint">{currentRoundCard.kind === "cloze" ? (roundAllShown ? "看完后继续下一张" : "点空看答案 · 点空白处全部显示") : (roundAllShown ? "看完后继续下一张" : "想好答案后，点空白处显示")}</div></div><div className="round-bottom"><span>已完成 {activeDeck.rounds} 轮 · 每张都过完后记为新的一轮</span><button className="button-primary" onClick={() => roundAllShown ? finishRoundCard() : toggleRoundAll()}>{roundAllShown ? nextRoundCardIndex(activeDeck, roundIndex + 1) === -1 ? "完成本轮" : "下一张" : "显示答案"}<ChevronRight size={16} /></button></div></> : null}</section>}
+        {view === "round" && <section className={`page-content round-page ${immersiveRound ? "round-immersive" : ""}`}><button className="icon-button immersive-toggle" title={immersiveRound ? "退出全屏" : "全屏背诵"} aria-label={immersiveRound ? "退出全屏" : "全屏背诵"} onClick={() => setImmersiveRound((open) => !open)}>{immersiveRound ? <Minimize2 size={19} /> : <Maximize2 size={19} />}</button>{!activeDeck ? <EmptyState onCreate={() => setView("create")} /> : roundDone ? <div className="round-finished"><span className="done-mark large-done"><Check size={25} /></span><p className="eyebrow">ROUND COMPLETE</p><h2>{roundComplete ? `第 ${activeDeck.rounds} 轮完成` : "本轮暂告一段落"}</h2><p>{roundComplete ? `这一轮的 ${activeDeck.cards.length} 张卡片已全部记住。` : "没记住的卡片会留在本轮队尾，之后可以继续背。"}</p><div className="finished-actions"><button className="button-primary" onClick={startRound}>再背一轮 <ChevronRight size={16} /></button><button className="button-outline" onClick={() => setView("today")}>返回总览</button></div></div> : currentRoundCard ? <><div className="round-toolbar"><button className="back-button" onClick={() => setView("today")}><ChevronLeft size={16} />学习总览</button><div className="round-title">{activeDeck.name}<span>第 {activeDeck.rounds + 1} 轮</span></div><div className="round-counter">{roundIndex + 1} <span>/</span> {roundOrder.length}</div></div><div className="round-track"><span style={{ width: `${((roundIndex + (roundAllShown ? 0.5 : 0)) / roundOrder.length) * 100}%` }} /></div><div className="round-card" onClick={toggleRoundAll} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter") toggleRoundAll(); }}><div className="current-section"><span>当前章节</span><strong>{currentRoundCard.section || "未分类"}</strong></div><span className="card-type">{currentRoundCard.kind === "cloze" ? "挖空回想" : "问答回想"}</span><div className="round-prompt">{currentRoundCard.kind === "cloze" ? <ClozeText text={currentRoundCard.front} shown={roundShown} onToggle={toggleRoundBlank} /> : currentRoundCard.front}</div>{roundAllShown && <div className="round-answer">{currentRoundCard.back}</div>}<div className="card-hint">{currentRoundCard.kind === "cloze" ? (roundAllShown ? "看完后继续下一张" : "点空看答案 · 点空白处全部显示") : (roundAllShown ? "看完后继续下一张" : "想好答案后，点空白处显示")}</div></div><div className="round-bottom"><span>已完成 {activeDeck.rounds} 轮 · 每张都过完后记为新的一轮</span><button className="button-primary" onClick={() => !roundAllShown ? toggleRoundAll() : roundIndex + 1 < roundOrder.length ? switchRoundCard(roundIndex + 1) : finishRoundCard()}>{roundAllShown ? roundIndex + 1 >= roundOrder.length ? "结束本轮" : "下一张" : "显示答案"}<ChevronRight size={16} /></button></div></> : null}</section>}
 
         {view === "cards" && <section className="page-content cards-page">{activeDeck ? <><div className="section-heading cards-heading"><div><h2>{activeDeck.name}</h2><p>{activeDeck.cards.length} 张卡片 · 已背诵 {activeDeck.rounds} 轮</p></div><div className="card-tools"><button className="button-outline" onClick={() => { setDeckName(activeDeck.name); setAddToDeckId(activeDeck.id); setDrafts([]); setView("create"); }}><Plus size={15} />继续加卡</button><button className="button-primary" onClick={startRound}>逐轮背诵 <ChevronRight size={15} /></button><button className="icon-button danger-icon" title="删除卡组" onClick={() => askDeleteDeck(activeDeck.id)}><Trash2 size={16} /></button></div></div><div className="card-list">{activeDeck.cards.map((card, i) => <article className="saved-card" key={card.id}><span className="saved-index">{String(i + 1).padStart(2, "0")}</span><div className="saved-main"><div className="saved-front"><span className={`tag ${card.kind === "cloze" ? "tag-amber" : "tag-blue"}`}>{card.kind === "cloze" ? "挖空" : "问答"}</span><p>{card.kind === "cloze" ? <ClozeText text={card.front} /> : card.front}</p></div><p className="saved-back">{card.back}</p></div><div className="saved-meta"><span>第 {card.roundSeen} 轮</span><span className={card.dueAt <= Date.now() ? "due-now" : ""}>{formatDue(card.dueAt)}</span></div><button className="icon-button small-icon" title="删除卡片" onClick={() => deleteCard(card.id)}><Trash2 size={15} /></button></article>)}{!activeDeck.cards.length && <EmptyState onCreate={() => setView("create")} />}</div></> : <EmptyState onCreate={() => setView("create")} />}</section>}
       </main>
 
       {(view === "round" && activeDeck && !roundDone) && <CardNavigator
-        cards={activeDeck.cards}
+        cards={roundCards}
         index={roundIndex}
-        onChange={setRoundIndex}
+        onChange={switchRoundCard}
         onRemember={roundAllShown && currentRoundCard?.reviewSkipRound !== activeDeck.rounds + 1 ? rememberRoundCard : undefined}
         rememberLabel="记住了"
       />}
-      {(view === "today" && due.length > 0) && <CardNavigator cards={due} index={reviewIndex} onChange={setReviewIndex} />}
+      {(view === "today" && due.length > 0) && <CardNavigator cards={due} index={reviewIndex} onChange={switchReviewCard} />}
 
       {deleteDeckId && (() => {
         const target = decks.find((deck) => deck.id === deleteDeckId);
